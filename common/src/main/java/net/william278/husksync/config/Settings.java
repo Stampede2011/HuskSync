@@ -64,7 +64,7 @@ public class Settings {
     private boolean checkForUpdates = true;
 
     @Comment("Specify a common ID for grouping servers running HuskSync. "
-            + "Don't modify this unless you know what you're doing!")
+             + "Don't modify this unless you know what you're doing!")
     private String clusterId = "";
 
     @Comment("Enable development debug logging")
@@ -140,6 +140,9 @@ public class Settings {
         @Comment("Names of tables to use on your database. Don't modify this unless you know what you're doing!")
         @Getter(AccessLevel.NONE)
         private Map<String, String> tableNames = Database.TableName.getDefaults();
+
+        @Comment("Whether to run the creation SQL on the database when the server starts. Don't modify this unless you know what you're doing!")
+        private boolean createTables = true;
 
         @NotNull
         public String getTableName(@NotNull Database.TableName tableName) {
@@ -229,7 +232,7 @@ public class Settings {
             private boolean enabled = false;
 
             @Comment("What items to save in death snapshots? (DROPS or ITEMS_TO_KEEP). "
-                    + "Note that ITEMS_TO_KEEP (suggested for keepInventory servers) requires a Paper 1.19.4+ server.")
+                     + "Note that ITEMS_TO_KEEP (suggested for keepInventory servers) requires a Paper 1.19.4+ server.")
             private DeathItemsMode itemsToSave = DeathItemsMode.DROPS;
 
             @Comment("Should a death snapshot still be created even if the items to save on the player's death are empty?")
@@ -250,14 +253,14 @@ public class Settings {
         @Comment("Whether to use the snappy data compression algorithm. Keep on unless you know what you're doing")
         private boolean compressData = true;
 
-        @Comment("Where to display sync notifications (ACTION_BAR, CHAT, TOAST or NONE)")
+        @Comment("Where to display sync notifications (ACTION_BAR, CHAT or NONE)")
         private Locales.NotificationSlot notificationDisplaySlot = Locales.NotificationSlot.ACTION_BAR;
 
         @Comment("Persist maps locked in a Cartography Table to let them be viewed on any server")
         private boolean persistLockedMaps = true;
 
         @Comment("If using the DELAY sync method, how long should this server listen for Redis key data updates before "
-                + "pulling data from the database instead (i.e., if the user did not change servers).")
+                 + "pulling data from the database instead (i.e., if the user did not change servers).")
         private int networkLatencyMilliseconds = 500;
 
         @Comment({"Which data types to synchronize.", "Docs: https://william278.net/docs/husksync/sync-features"})
@@ -267,10 +270,52 @@ public class Settings {
         @Comment("Commands which should be blocked before a player has finished syncing (Use * to block all commands)")
         private List<String> blacklistedCommandsWhileLocked = new ArrayList<>(List.of("*"));
 
-        @Comment({"For attribute syncing, which attributes should be ignored/skipped when syncing",
-                "(e.g. ['minecraft:generic.max_health', 'minecraft:generic.attack_damage'])"})
-        @Getter(AccessLevel.NONE)
-        private List<String> ignoredAttributes = new ArrayList<>(List.of(""));
+        @Comment("Configuration for how to sync attributes")
+        private AttributeSettings attributes = new AttributeSettings();
+
+        @Getter
+        @Configuration
+        @NoArgsConstructor(access = AccessLevel.PRIVATE)
+        public static class AttributeSettings {
+
+            @Comment({"Which attribute types should be saved as part of attribute syncing. Supports wildcard matching.",
+                    "(e.g. ['minecraft:generic.max_health', 'minecraft:generic.*'])"})
+            @Getter(AccessLevel.NONE)
+            private List<String> syncedAttributes = new ArrayList<>(List.of(
+                    "minecraft:generic.max_health", "minecraft:max_health",
+                    "minecraft:generic.max_absorption", "minecraft:max_absorption",
+                    "minecraft:generic.luck", "minecraft:luck",
+                    "minecraft:generic.scale", "minecraft:scale",
+                    "minecraft:generic.step_height", "minecraft:step_height",
+                    "minecraft:generic.gravity", "minecraft:gravity"
+            ));
+
+            @Comment({"Which attribute modifiers should be saved. Supports wildcard matching.",
+                    "(e.g. ['minecraft:effect.speed', 'minecraft:effect.*'])"})
+            @Getter(AccessLevel.NONE)
+            private List<String> ignoredModifiers = new ArrayList<>(List.of(
+                    "minecraft:effect.*", "minecraft:creative_mode_*"
+            ));
+
+            private boolean matchesWildcard(@NotNull String pat, @NotNull String value) {
+                if (!pat.contains(":")) {
+                    pat = "minecraft:%s".formatted(pat);
+                }
+                if (!value.contains(":")) {
+                    value = "minecraft:%s".formatted(value);
+                }
+                return pat.contains("*") ? value.matches(pat.replace("*", ".*")) : pat.equals(value);
+            }
+
+            public boolean isIgnoredAttribute(@NotNull String attribute) {
+                return syncedAttributes.stream().noneMatch(wildcard -> matchesWildcard(wildcard, attribute));
+            }
+
+            public boolean isIgnoredModifier(@NotNull String modifier) {
+                return ignoredModifiers.stream().anyMatch(wildcard -> matchesWildcard(wildcard, modifier));
+            }
+
+        }
 
         @Comment("Event priorities for listeners (HIGHEST, NORMAL, LOWEST). Change if you encounter plugin conflicts")
         @Getter(AccessLevel.NONE)
@@ -282,10 +327,6 @@ public class Settings {
 
         public boolean isFeatureEnabled(@NotNull Identifier id) {
             return id.isCustom() || features.getOrDefault(id.getKeyValue(), id.isEnabledByDefault());
-        }
-
-        public boolean isIgnoredAttribute(@NotNull String attribute) {
-            return ignoredAttributes.contains(attribute);
         }
 
         @NotNull

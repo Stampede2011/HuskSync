@@ -31,7 +31,7 @@ import net.william278.mapdataapi.MapData;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.ShulkerBox;
+import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
@@ -96,7 +96,7 @@ public interface BukkitMapPersister {
             }
             if (item.getType() == Material.FILLED_MAP && item.hasItemMeta()) {
                 items[i] = function.apply(item);
-            } else if (item.getItemMeta() instanceof BlockStateMeta b && b.getBlockState() instanceof ShulkerBox box) {
+            } else if (item.getItemMeta() instanceof BlockStateMeta b && b.getBlockState() instanceof Container box) {
                 forEachMap(box.getInventory().getContents(), function);
                 b.setBlockState(box);
             }
@@ -122,7 +122,8 @@ public interface BukkitMapPersister {
             }
 
             // Render the map
-            final PersistentMapCanvas canvas = new PersistentMapCanvas(view);
+            final int dataVersion = getPlugin().getDataVersion(getPlugin().getMinecraftVersion());
+            final PersistentMapCanvas canvas = new PersistentMapCanvas(view, dataVersion);
             for (MapRenderer renderer : view.getRenderers()) {
                 renderer.render(view, canvas, delegateRenderer);
                 getPlugin().debug(String.format("Rendered locked map canvas to view (#%s)", view.getId()));
@@ -140,6 +141,7 @@ public interface BukkitMapPersister {
 
     @NotNull
     private ItemStack applyMapView(@NotNull ItemStack map) {
+        final int dataVersion = getPlugin().getDataVersion(getPlugin().getMinecraftVersion());
         final MapMeta meta = Objects.requireNonNull((MapMeta) map.getItemMeta());
         NBT.get(map, nbt -> {
             if (!nbt.hasTag(MAP_DATA_KEY)) {
@@ -155,8 +157,8 @@ public interface BukkitMapPersister {
             Optional<String> world = Optional.empty();
             for (String worldUid : mapIds.getKeys()) {
                 world = getPlugin().getServer().getWorlds().stream()
-                    .map(w -> w.getUID().toString()).filter(u -> u.equals(worldUid))
-                    .findFirst();
+                        .map(w -> w.getUID().toString()).filter(u -> u.equals(worldUid))
+                        .findFirst();
                 if (world.isPresent()) {
                     break;
                 }
@@ -178,8 +180,9 @@ public interface BukkitMapPersister {
             final MapData canvasData;
             try {
                 getPlugin().debug("Deserializing map data from NBT and generating view...");
-                canvasData = MapData.fromByteArray(Objects.requireNonNull(mapData.getByteArray(MAP_PIXEL_DATA_KEY),
-                    "Map pixel data is null"));
+                canvasData = MapData.fromByteArray(
+                        dataVersion,
+                        Objects.requireNonNull(mapData.getByteArray(MAP_PIXEL_DATA_KEY), "Pixel data null!"));
             } catch (Throwable e) {
                 getPlugin().log(Level.WARNING, "Failed to deserialize map data from NBT", e);
                 return;
@@ -195,8 +198,8 @@ public interface BukkitMapPersister {
             // Set the map view ID in NBT
             NBT.modify(map, editable -> {
                 Objects.requireNonNull(editable.getCompound(MAP_VIEW_ID_MAPPINGS_KEY),
-                        "Map view ID mappings compound is null")
-                    .setInteger(worldUid, view.getId());
+                                "Map view ID mappings compound is null")
+                        .setInteger(worldUid, view.getId());
             });
             getPlugin().debug(String.format("Generated view (#%s) and updated map (UID: %s)", view.getId(), worldUid));
         });
@@ -276,7 +279,7 @@ public interface BukkitMapPersister {
 
     @NotNull
     private static World getDefaultMapWorld() {
-        final World world = Bukkit.getWorlds().get(0);
+        final World world = Bukkit.getWorlds().getFirst();
         if (world == null) {
             throw new IllegalStateException("No worlds are loaded on the server!");
         }
@@ -308,7 +311,7 @@ public interface BukkitMapPersister {
             // We set the pixels in this order to avoid the map being rendered upside down
             for (int i = 0; i < 128; i++) {
                 for (int j = 0; j < 128; j++) {
-                    canvas.setPixel(j, i, (byte) canvasData.getColorAt(i, j));
+                    canvas.setPixelColor(j, i, canvasData.getMapColorAt(i, j));
                 }
             }
 
@@ -326,29 +329,29 @@ public interface BukkitMapPersister {
     @NotNull
     private static MapCursor createBannerCursor(@NotNull MapBanner banner) {
         return new MapCursor(
-            (byte) banner.getPosition().getX(),
-            (byte) banner.getPosition().getZ(),
-            (byte) 8, // Always rotate banners upright
-            switch (banner.getColor().toLowerCase(Locale.ENGLISH)) {
-                case "white" -> MapCursor.Type.BANNER_WHITE;
-                case "orange" -> MapCursor.Type.BANNER_ORANGE;
-                case "magenta" -> MapCursor.Type.BANNER_MAGENTA;
-                case "light_blue" -> MapCursor.Type.BANNER_LIGHT_BLUE;
-                case "yellow" -> MapCursor.Type.BANNER_YELLOW;
-                case "lime" -> MapCursor.Type.BANNER_LIME;
-                case "pink" -> MapCursor.Type.BANNER_PINK;
-                case "gray" -> MapCursor.Type.BANNER_GRAY;
-                case "light_gray" -> MapCursor.Type.BANNER_LIGHT_GRAY;
-                case "cyan" -> MapCursor.Type.BANNER_CYAN;
-                case "purple" -> MapCursor.Type.BANNER_PURPLE;
-                case "blue" -> MapCursor.Type.BANNER_BLUE;
-                case "brown" -> MapCursor.Type.BANNER_BROWN;
-                case "green" -> MapCursor.Type.BANNER_GREEN;
-                case "red" -> MapCursor.Type.BANNER_RED;
-                default -> MapCursor.Type.BANNER_BLACK;
-            },
-            true,
-            banner.getText().isEmpty() ? null : banner.getText()
+                (byte) banner.getPosition().getX(),
+                (byte) banner.getPosition().getZ(),
+                (byte) 8, // Always rotate banners upright
+                switch (banner.getColor().toLowerCase(Locale.ENGLISH)) {
+                    case "white" -> MapCursor.Type.BANNER_WHITE;
+                    case "orange" -> MapCursor.Type.BANNER_ORANGE;
+                    case "magenta" -> MapCursor.Type.BANNER_MAGENTA;
+                    case "light_blue" -> MapCursor.Type.BANNER_LIGHT_BLUE;
+                    case "yellow" -> MapCursor.Type.BANNER_YELLOW;
+                    case "lime" -> MapCursor.Type.BANNER_LIME;
+                    case "pink" -> MapCursor.Type.BANNER_PINK;
+                    case "gray" -> MapCursor.Type.BANNER_GRAY;
+                    case "light_gray" -> MapCursor.Type.BANNER_LIGHT_GRAY;
+                    case "cyan" -> MapCursor.Type.BANNER_CYAN;
+                    case "purple" -> MapCursor.Type.BANNER_PURPLE;
+                    case "blue" -> MapCursor.Type.BANNER_BLUE;
+                    case "brown" -> MapCursor.Type.BANNER_BROWN;
+                    case "green" -> MapCursor.Type.BANNER_GREEN;
+                    case "red" -> MapCursor.Type.BANNER_RED;
+                    default -> MapCursor.Type.BANNER_BLACK;
+                },
+                true,
+                banner.getText().isEmpty() ? null : banner.getText()
         );
     }
 
@@ -357,11 +360,13 @@ public interface BukkitMapPersister {
      */
     class PersistentMapCanvas implements MapCanvas {
 
+        private final int mapDataVersion;
         private final MapView mapView;
         private final int[][] pixels = new int[128][128];
         private MapCursorCollection cursors;
 
-        private PersistentMapCanvas(@NotNull MapView mapView) {
+        private PersistentMapCanvas(@NotNull MapView mapView, int mapDataVersion) {
+            this.mapDataVersion = mapDataVersion;
             this.mapView = mapView;
         }
 
@@ -383,18 +388,38 @@ public interface BukkitMapPersister {
         }
 
         @Override
+        @Deprecated
         public void setPixel(int x, int y, byte color) {
             pixels[x][y] = color;
         }
 
         @Override
+        @Deprecated
         public byte getPixel(int x, int y) {
             return (byte) pixels[x][y];
         }
 
         @Override
+        @Deprecated
         public byte getBasePixel(int x, int y) {
             return getPixel(x, y);
+        }
+
+        @Override
+        public void setPixelColor(int i, int i1, @Nullable Color color) {
+            pixels[i][i1] = color == null ? 0 : color.getRGB();
+        }
+
+        @Nullable
+        @Override
+        public Color getPixelColor(int x, int y) {
+            return getBasePixelColor(x, y);
+        }
+
+        @NotNull
+        @Override
+        public Color getBasePixelColor(int x, int y) {
+            return new Color(pixels[x][y]);
         }
 
         @Override
@@ -427,18 +452,19 @@ public interface BukkitMapPersister {
             final String BANNER_PREFIX = "banner_";
             for (int i = 0; i < getCursors().size(); i++) {
                 final MapCursor cursor = getCursors().getCursor(i);
-                final String type = cursor.getType().name().toLowerCase(Locale.ENGLISH);
+                final String type = cursor.getType().getKey().getKey();
                 if (type.startsWith(BANNER_PREFIX)) {
                     banners.add(new MapBanner(
-                        type.replaceAll(BANNER_PREFIX, ""),
-                        cursor.getCaption() == null ? "" : cursor.getCaption(),
-                        cursor.getX(),
-                        mapView.getWorld() != null ? mapView.getWorld().getSeaLevel() : 128,
-                        cursor.getY()
+                            type.replaceAll(BANNER_PREFIX, ""),
+                            cursor.getCaption() == null ? "" : cursor.getCaption(),
+                            cursor.getX(),
+                            mapView.getWorld() != null ? mapView.getWorld().getSeaLevel() : 128,
+                            cursor.getY()
                     ));
                 }
+
             }
-            return MapData.fromPixels(pixels, getDimension(), (byte) 2, banners, List.of());
+            return MapData.fromPixels(mapDataVersion, pixels, getDimension(), (byte) 2, banners, List.of());
         }
     }
 

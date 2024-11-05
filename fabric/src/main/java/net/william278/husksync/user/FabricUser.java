@@ -25,7 +25,7 @@ import eu.pb4.sgui.api.elements.GuiElementInterface;
 import eu.pb4.sgui.api.gui.SimpleGui;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.kyori.adventure.audience.Audience;
-import net.kyori.adventure.platform.fabric.FabricServerAudiences;
+import net.kyori.adventure.platform.modcommon.MinecraftServerAudiences;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.GenericContainerScreenHandler;
 import net.minecraft.screen.ScreenHandlerType;
@@ -40,6 +40,7 @@ import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.function.Consumer;
+import java.util.logging.Level;
 
 public class FabricUser extends OnlineUser implements FabricUserDataHolder {
 
@@ -70,9 +71,12 @@ public class FabricUser extends OnlineUser implements FabricUserDataHolder {
     }
 
     @Override
+    @Deprecated(since = "3.6.7")
     public void sendToast(@NotNull MineDown title, @NotNull MineDown description, @NotNull String iconMaterial,
                           @NotNull String backgroundType) {
-        getAudience().sendActionBar(title.toComponent()); // Toasts unimplemented for now
+        plugin.log(Level.WARNING, "Toast notifications are deprecated. " +
+                                  "Please change your notification display slot to CHAT, ACTION_BAR or NONE.");
+        this.sendActionBar(title);
     }
 
     @Override
@@ -98,7 +102,7 @@ public class FabricUser extends OnlineUser implements FabricUserDataHolder {
             this.editable = editable;
 
             // Set title, items
-            this.setTitle(((FabricServerAudiences) plugin.getAudiences()).toNative(title.toComponent()));
+            this.setTitle(((MinecraftServerAudiences) plugin.getAudiences()).asNative(title.toComponent()));
             this.setLockPlayerInventory(!editable);
             for (int i = 0; i < size; i++) {
                 final ItemStack item = items.getContents()[i];

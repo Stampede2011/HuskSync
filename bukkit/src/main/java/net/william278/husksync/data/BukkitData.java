@@ -25,24 +25,20 @@ import com.google.gson.annotations.SerializedName;
 import de.tr7zw.changeme.nbtapi.NBTCompound;
 import de.tr7zw.changeme.nbtapi.NBTPersistentDataContainer;
 import lombok.*;
-import net.kyori.adventure.util.TriState;
 import net.william278.desertwell.util.ThrowingConsumer;
-import net.william278.desertwell.util.Version;
 import net.william278.husksync.BukkitHuskSync;
 import net.william278.husksync.HuskSync;
 import net.william278.husksync.adapter.Adaptable;
+import net.william278.husksync.config.Settings.SynchronizationSettings.AttributeSettings;
 import net.william278.husksync.user.BukkitUser;
-import org.bukkit.Bukkit;
-import org.bukkit.Material;
-import org.bukkit.Registry;
-import org.bukkit.Statistic;
-import org.bukkit.NamespacedKey;
+import org.bukkit.*;
 import org.bukkit.advancement.AdvancementProgress;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryType;
-import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.potion.PotionEffect;
@@ -50,6 +46,7 @@ import org.bukkit.potion.PotionEffectType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Range;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.*;
 import java.util.logging.Level;
@@ -158,20 +155,17 @@ public abstract class BukkitData implements Data {
                 this.clearInventoryCraftingSlots(player);
                 player.setItemOnCursor(null);
                 player.getInventory().setContents(plugin.setMapViews(getContents()));
-                player.updateInventory();
                 player.getInventory().setHeldItemSlot(heldItemSlot);
+                //noinspection UnstableApiUsage
+                player.updateInventory();
             }
 
             private void clearInventoryCraftingSlots(@NotNull Player player) {
-                try {
-                    final org.bukkit.inventory.Inventory inventory = player.getOpenInventory().getTopInventory();
-                    if (inventory.getType() == InventoryType.CRAFTING) {
-                        for (int slot = 0; slot < 5; slot++) {
-                            inventory.setItem(slot, null);
-                        }
+                final org.bukkit.inventory.Inventory inventory = player.getOpenInventory().getTopInventory();
+                if (inventory.getType() == InventoryType.CRAFTING) {
+                    for (int slot = 0; slot < 5; slot++) {
+                        inventory.setItem(slot, null);
                     }
-                } catch (Throwable e) {
-                    // Ignore any exceptions
                 }
             }
 
@@ -238,8 +232,9 @@ public abstract class BukkitData implements Data {
         private final Collection<PotionEffect> effects;
 
         @NotNull
-        public static BukkitData.PotionEffects from(@NotNull Collection<PotionEffect> effects) {
-            return new BukkitData.PotionEffects(effects);
+        public static BukkitData.PotionEffects from(@NotNull Collection<PotionEffect> sei) {
+            return new BukkitData.PotionEffects(Lists.newArrayList(sei.stream().filter(e -> !e.isAmbient()).toList()));
+
         }
 
         @NotNull
@@ -263,7 +258,7 @@ public abstract class BukkitData implements Data {
         @NotNull
         @SuppressWarnings("unused")
         public static BukkitData.PotionEffects empty() {
-            return new BukkitData.PotionEffects(List.of());
+            return new BukkitData.PotionEffects(Lists.newArrayList());
         }
 
         @Override
@@ -279,10 +274,11 @@ public abstract class BukkitData implements Data {
 
         @NotNull
         @Override
+        @Unmodifiable
         public List<Effect> getActiveEffects() {
             return effects.stream()
                     .map(potionEffect -> new Effect(
-                            potionEffect.getType().getName().toLowerCase(Locale.ENGLISH),
+                            potionEffect.getType().getKey().toString(),
                             potionEffect.getAmplifier(),
                             potionEffect.getDuration(),
                             potionEffect.isAmbient(),
@@ -366,7 +362,7 @@ public abstract class BukkitData implements Data {
 
                 // Set player experience and level (prevent advancement awards applying twice), reset game rule
                 if (!toAward.isEmpty()
-                        && (player.getLevel() != expLevel || player.getExp() != expProgress)) {
+                    && (player.getLevel() != expLevel || player.getExp() != expProgress)) {
                     player.setLevel(expLevel);
                     player.setExp(expProgress);
                 }
@@ -457,9 +453,10 @@ public abstract class BukkitData implements Data {
             Registry.STATISTIC.forEach(id -> {
                 switch (id.getType()) {
                     case UNTYPED -> addStatistic(player, id, generic);
-                    case BLOCK -> addMaterialStatistic(player, id, blocks, true);
-                    case ITEM -> addMaterialStatistic(player, id, items, false);
-                    case ENTITY -> addEntityStatistic(player, id, entities);
+                    // Todo - Future - Use BLOCK and ITEM registries when API stabilizes
+                    case BLOCK -> addStatistic(player, id, Registry.MATERIAL, blocks);
+                    case ITEM -> addStatistic(player, id, Registry.MATERIAL, items);
+                    case ENTITY -> addStatistic(player, id, Registry.ENTITY_TYPE, entities);
                 }
             });
             return new BukkitData.Statistics(generic, blocks, items, entities);
@@ -480,43 +477,31 @@ public abstract class BukkitData implements Data {
             }
         }
 
-        private static void addMaterialStatistic(@NotNull Player p, @NotNull Statistic id,
-                                                 @NotNull Map<String, Map<String, Integer>> map, boolean isBlock) {
-            Registry.MATERIAL.forEach(material -> {
-                if ((material.isBlock() && !isBlock) || (material.isItem() && isBlock)) {
-                    return;
-                }
-                final int stat = p.getStatistic(id, material);
-                if (stat != 0) {
-                    map.computeIfAbsent(id.getKey().getKey(), k -> Maps.newHashMap())
-                            .put(material.getKey().getKey(), stat);
-                }
-            });
-        }
-
-        private static void addEntityStatistic(@NotNull Player p, @NotNull Statistic id,
-                                               @NotNull Map<String, Map<String, Integer>> map) {
-            Registry.ENTITY_TYPE.forEach(entity -> {
-                if (!entity.isAlive()) {
-                    return;
-                }
-                final int stat = p.getStatistic(id, entity);
-                if (stat != 0) {
-                    map.computeIfAbsent(id.getKey().getKey(), k -> Maps.newHashMap())
-                            .put(entity.getKey().getKey(), stat);
+        private static <R extends Keyed> void addStatistic(@NotNull Player p, @NotNull Statistic id,
+                                                           @NotNull Registry<R> registry,
+                                                           @NotNull Map<String, Map<String, Integer>> map) {
+            registry.forEach(i -> {
+                try {
+                    final int stat = i instanceof Material m ? p.getStatistic(id, m) :
+                            (i instanceof EntityType e ? p.getStatistic(id, e) : -1);
+                    if (stat != 0) {
+                        map.compute(id.getKey().getKey(), (k, v) -> v == null ? Maps.newHashMap() : v)
+                                .put(i.getKey().getKey(), stat);
+                    }
+                } catch (IllegalStateException ignored) {
                 }
             });
         }
 
         @Override
-        public void apply(@NotNull BukkitUser user, @NotNull BukkitHuskSync plugin) {
-            genericStatistics.forEach((id, v) -> applyStat(user, id, Statistic.Type.UNTYPED, v));
-            blockStatistics.forEach((id, m) -> m.forEach((b, v) -> applyStat(user, id, Statistic.Type.BLOCK, v, b)));
-            itemStatistics.forEach((id, m) -> m.forEach((i, v) -> applyStat(user, id, Statistic.Type.ITEM, v, i)));
-            entityStatistics.forEach((id, m) -> m.forEach((e, v) -> applyStat(user, id, Statistic.Type.ENTITY, v, e)));
+        public void apply(@NotNull BukkitUser user, @NotNull BukkitHuskSync p) {
+            genericStatistics.forEach((k, v) -> applyStat(p, user, k, Statistic.Type.UNTYPED, v));
+            blockStatistics.forEach((k, m) -> m.forEach((b, v) -> applyStat(p, user, k, Statistic.Type.BLOCK, v, b)));
+            itemStatistics.forEach((k, m) -> m.forEach((i, v) -> applyStat(p, user, k, Statistic.Type.ITEM, v, i)));
+            entityStatistics.forEach((k, m) -> m.forEach((e, v) -> applyStat(p, user, k, Statistic.Type.ENTITY, v, e)));
         }
 
-        private void applyStat(@NotNull UserDataHolder user, @NotNull String id,
+        private void applyStat(@NotNull HuskSync plugin, @NotNull UserDataHolder user, @NotNull String id,
                                @NotNull Statistic.Type type, int value, @NotNull String... key) {
             final Player player = ((BukkitUser) user).getPlayer();
             final Statistic stat = matchStatistic(id);
@@ -530,7 +515,8 @@ public abstract class BukkitData implements Data {
                     case BLOCK, ITEM -> player.setStatistic(stat, Objects.requireNonNull(matchMaterial(key[0])), value);
                     case ENTITY -> player.setStatistic(stat, Objects.requireNonNull(matchEntityType(key[0])), value);
                 }
-            } catch (Throwable ignored) {
+            } catch (Throwable a) {
+                plugin.log(Level.WARNING, "Failed to apply statistic " + id, a);
             }
         }
 
@@ -565,26 +551,21 @@ public abstract class BukkitData implements Data {
     @Getter
     @AllArgsConstructor(access = AccessLevel.PRIVATE)
     @NoArgsConstructor(access = AccessLevel.PRIVATE)
+    @SuppressWarnings("UnstableApiUsage")
     public static class Attributes extends BukkitData implements Data.Attributes, Adaptable {
-
-        private static final String EQUIPMENT_SLOT_GROUP = "org.bukkit.inventory.EquipmentSlotGroup";
-        private static final String EQUIPMENT_SLOT_GROUP$ANY = "ANY";
-        private static final String EQUIPMENT_SLOT$getGroup = "getGroup";
-        private static TriState USE_KEYED_MODIFIERS = TriState.NOT_SET;
 
         private List<Attribute> attributes;
 
         @NotNull
         public static BukkitData.Attributes adapt(@NotNull Player player, @NotNull HuskSync plugin) {
             final List<Attribute> attributes = Lists.newArrayList();
+            final AttributeSettings settings = plugin.getSettings().getSynchronization().getAttributes();
             Registry.ATTRIBUTE.forEach(id -> {
                 final AttributeInstance instance = player.getAttribute(id);
-                if (instance == null || Double.compare(instance.getValue(), instance.getDefaultValue()) == 0
-                        || plugin.getSettings().getSynchronization().isIgnoredAttribute(id.getKey().toString())) {
-                    // We don't sync unmodified or disabled attributes
-                    return;
+                if (settings.isIgnoredAttribute(id.getKey().toString()) || instance == null) {
+                    return; // We don't sync attributes not marked as to be synced
                 }
-                attributes.add(adapt(instance));
+                attributes.add(adapt(instance, settings));
             });
             return new BukkitData.Attributes(attributes);
         }
@@ -603,88 +584,61 @@ public abstract class BukkitData implements Data {
         }
 
         @NotNull
-        private static Attribute adapt(@NotNull AttributeInstance instance) {
+        private static Attribute adapt(@NotNull AttributeInstance instance, @NotNull AttributeSettings settings) {
             return new Attribute(
                     instance.getAttribute().getKey().toString(),
                     instance.getBaseValue(),
-                    instance.getModifiers().stream().map(BukkitData.Attributes::adapt).collect(Collectors.toSet())
+                    instance.getModifiers().stream()
+                            .filter(modifier -> !settings.isIgnoredModifier(modifier.getName()))
+                            .filter(modifier -> modifier.getSlotGroup() != EquipmentSlotGroup.ANY)
+                            .map(BukkitData.Attributes::adapt).collect(Collectors.toSet())
             );
         }
 
         @NotNull
         private static Modifier adapt(@NotNull AttributeModifier modifier) {
             return new Modifier(
-                    getModifierId(modifier),
-                    modifier.getName(),
+                    modifier.getKey().toString(),
                     modifier.getAmount(),
                     modifier.getOperation().ordinal(),
-                    modifier.getSlot() != null ? modifier.getSlot().ordinal() : -1
+                    modifier.getSlotGroup().toString()
             );
         }
 
-        @Nullable
-        private static UUID getModifierId(@NotNull AttributeModifier modifier) {
-            try {
-                return modifier.getUniqueId();
-            } catch (Throwable e) {
-                return null;
-            }
-        }
-
-        private static void applyAttribute(@Nullable AttributeInstance instance, @Nullable Attribute attribute,
-                                           @NotNull HuskSync plugin) {
+        private static void applyAttribute(@Nullable AttributeInstance instance, @Nullable Attribute attribute) {
             if (instance == null) {
                 return;
             }
-            instance.setBaseValue(attribute == null ? instance.getDefaultValue() : attribute.baseValue());
             instance.getModifiers().forEach(instance::removeModifier);
+            instance.setBaseValue(attribute == null ? instance.getValue() : attribute.baseValue());
             if (attribute != null) {
-                attribute.modifiers().forEach(modifier -> instance.addModifier(adapt(modifier, plugin)));
+                attribute.modifiers().stream()
+                        .filter(mod -> instance.getModifiers().stream().map(AttributeModifier::getName)
+                                .noneMatch(n -> n.equals(mod.name())))
+                        .distinct().filter(mod -> !mod.hasUuid())
+                        .forEach(mod -> instance.addModifier(adapt(mod)));
             }
         }
 
-        @SuppressWarnings("JavaReflectionMemberAccess")
         @NotNull
-        private static AttributeModifier adapt(@NotNull Modifier modifier, @NotNull HuskSync plugin) {
-            final int slotId = modifier.equipmentSlot();
-            if (USE_KEYED_MODIFIERS == TriState.NOT_SET) {
-                USE_KEYED_MODIFIERS = TriState.byBoolean(plugin.getMinecraftVersion()
-                        .compareTo(Version.fromString("1.21")) >= 0);
-            }
-            if (USE_KEYED_MODIFIERS == TriState.TRUE) {
-                try {
-                    // Reflexively create a modern keyed attribute modifier instance. Remove in favor of API long-term.
-                    final EquipmentSlot slot = slotId != -1 ? EquipmentSlot.values()[slotId] : null;
-                    final Class<?> slotGroup = Class.forName(EQUIPMENT_SLOT_GROUP);
-                    final String modifierName = modifier.name() == null ? modifier.uuid().toString() : modifier.name();
-                    return AttributeModifier.class.getDeclaredConstructor(
-                            NamespacedKey.class, double.class, AttributeModifier.Operation.class, slotGroup
-                    ).newInstance(
-                            NamespacedKey.fromString(modifierName),
-                            modifier.amount(),
-                            AttributeModifier.Operation.values()[modifier.operationType()],
-                            slot == null ? slotGroup.getField(EQUIPMENT_SLOT_GROUP$ANY).get(null)
-                                    : EquipmentSlot.class.getDeclaredMethod(EQUIPMENT_SLOT$getGroup).invoke(slot)
-                    );
-                } catch (Throwable e) {
-                    plugin.log(Level.WARNING, "Error reflectively creating keyed attribute modifier", e);
-                    USE_KEYED_MODIFIERS = TriState.FALSE;
-                }
-            }
+        private static AttributeModifier adapt(@NotNull Modifier modifier) {
             return new AttributeModifier(
-                    modifier.uuid(),
-                    modifier.name(),
+                    Objects.requireNonNull(NamespacedKey.fromString(modifier.name())),
                     modifier.amount(),
-                    AttributeModifier.Operation.values()[modifier.operationType()],
-                    slotId != -1 ? EquipmentSlot.values()[slotId] : null
+                    AttributeModifier.Operation.values()[modifier.operation()],
+                    Optional.ofNullable(EquipmentSlotGroup.getByName(modifier.slotGroup())).orElse(EquipmentSlotGroup.ANY)
             );
         }
 
         @Override
         public void apply(@NotNull BukkitUser user, @NotNull BukkitHuskSync plugin) throws IllegalStateException {
-            Registry.ATTRIBUTE.forEach(id -> applyAttribute(
-                    user.getPlayer().getAttribute(id), getAttribute(id).orElse(null), plugin
-            ));
+            final AttributeSettings settings = plugin.getSettings().getSynchronization().getAttributes();
+            Registry.ATTRIBUTE.forEach(id -> {
+                if (settings.isIgnoredAttribute(id.getKey().toString())) {
+                    return;
+                }
+                applyAttribute(user.getPlayer().getAttribute(id), getAttribute(id).orElse(null));
+            });
         }
 
     }
